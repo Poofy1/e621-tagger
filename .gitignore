@@ -12,6 +12,8 @@
 *.pkl
 *.csv
 *.parquet
+*.pth
+*.png
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

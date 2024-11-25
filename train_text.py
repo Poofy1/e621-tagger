@@ -1,22 +1,84 @@
 
-import torch, math, os, re, pickle
+import torch,os, pickle
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
-import numpy as np
 import random
 import pandas as pd
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
-from torchvision.models import resnet18, ResNet18_Weights, resnet34, ResNet34_Weights
 from transformers import ViTModel
 from torch.nn import TransformerDecoder, TransformerDecoderLayer
 import pyarrow.parquet as pq
 env = os.path.dirname(os.path.abspath(__file__))
 
+
+import matplotlib.pyplot as plt
+import torchvision.transforms as T
+from textwrap import wrap
+
+def plot_predictions(model, batch, dataset, save_path, device, num_samples=3):
+    # Denormalize images for display
+    denorm = T.Normalize(
+        mean=[-0.485/0.229, -0.456/0.224, -0.406/0.225],
+        std=[1/0.229, 1/0.224, 1/0.225]
+    )
+    
+    # Get predictions
+    with torch.no_grad():
+        outputs = model(batch)
+        predictions = outputs.argmax(dim=-1)
+    
+    # Create subplot grid with more height for text
+    fig, axes = plt.subplots(num_samples, 1, figsize=(20, 8*num_samples))
+    
+    for i in range(min(num_samples, len(batch['images']))):
+        # Get and denormalize image
+        img = denorm(batch['images'][i]).cpu()
+        img = torch.clamp(img, 0, 1)
+        
+        # Convert predicted indices to tags
+        pred_tags = []
+        for idx in predictions[i]:
+            if idx.item() == dataset.vocab.word2index['<END>']:
+                break
+            if idx.item() not in [dataset.vocab.word2index['<PAD>'], 
+                                 dataset.vocab.word2index['<START>'], 
+                                 dataset.vocab.word2index['<UNK>']]:
+                pred_tags.append(dataset.vocab.index2word[idx.item()])
+        
+        # Get ground truth tags
+        true_tags = []
+        for idx in batch['labels'][i]:
+            if idx.item() == dataset.vocab.word2index['<END>']:
+                break
+            if idx.item() not in [dataset.vocab.word2index['<PAD>'], 
+                                 dataset.vocab.word2index['<START>'], 
+                                 dataset.vocab.word2index['<UNK>']]:
+                true_tags.append(dataset.vocab.index2word[idx.item()])
+        
+        # Wrap text for better display
+        pred_text = "Predicted: " + ", ".join(pred_tags)
+        true_text = "Actual: " + ", ".join(true_tags)
+        
+        # Split text into multiple lines if too long
+        pred_wrapped = "\n".join(wrap(pred_text, width=120))
+        true_wrapped = "\n".join(wrap(true_text, width=120))
+        
+        # Plot
+        axes[i].imshow(img.permute(1, 2, 0))
+        axes[i].axis('off')
+        
+        # Add text with smaller font and more space
+        axes[i].set_title(f'{pred_wrapped}\n\n{true_wrapped}',
+                         fontsize=8, wrap=True, pad=20)
+    
+    plt.tight_layout(pad=3.0)  # Increase padding between subplots
+    plt.savefig(save_path, bbox_inches='tight', dpi=300)
+    plt.close()
+    
+    
 class Vocabulary:
     def __init__(self):
         self.word2index = {
@@ -68,6 +130,9 @@ class E621Dataset(Dataset):
         # Load tag map
         self.tag_map = load_tag_map(tag_map_file)
 
+        # Clean tag map - remove non-string entries
+        self.tag_map = {k: v for k, v in self.tag_map.items() if isinstance(v, str)}
+
         # Get all unique tags
         self.all_tags = set()
         for tags in self.data['tag_indices']:
@@ -104,15 +169,7 @@ class E621Dataset(Dataset):
         
         tag_indices = self.data.iloc[idx]['tag_indices']
         
-        # Add error checking and type conversion
-        tags = []
-        for idx_tag in tag_indices:
-            if idx_tag in self.tag_map:
-                tag = self.tag_map[idx_tag]
-                # Convert to string if it's a float or other type
-                if not isinstance(tag, str):
-                    tag = str(tag)
-                tags.append(tag)
+        tags = [self.tag_map[idx] for idx in tag_indices if idx in self.tag_map]
         
         # Randomly shuffle tags during training
         random.shuffle(tags)
@@ -189,47 +246,19 @@ class ImageLabelModel(nn.Module):
         # Encode images
         vision_output = self.vision_encoder(images).last_hidden_state
         
-        if self.training:
-            # Training mode - unchanged
-            tgt_embeddings = self.token_embedding(labels)
-            pos_embeddings = self.position_embedding[:, :seq_len, :]
-            
-            decoder_input = (tgt_embeddings + pos_embeddings).transpose(0, 1)
-            
-            decoder_output = self.decoder(
-                tgt=decoder_input,
-                memory=vision_output.transpose(0, 1),
-                tgt_key_padding_mask=~attention_mask.bool()
-            )
-            logits = self.output_layer(decoder_output.transpose(0, 1))
-            return logits
+        # Always use teacher forcing during training and validation
+        tgt_embeddings = self.token_embedding(labels)
+        pos_embeddings = self.position_embedding[:, :seq_len, :]
         
-        else:
-            # Inference mode - return logits instead of token indices
-            curr_token = torch.full((batch_size, 1), self.start_token).to(images.device)
-            all_logits = []
-            max_gen_length = 200
-            
-            for i in range(max_gen_length):
-                token_embed = self.token_embedding(curr_token)
-                pos_embed = self.position_embedding[:, i:i+1, :]
-                decoder_input = (token_embed + pos_embed).transpose(0, 1)
-                
-                decoder_output = self.decoder(
-                    tgt=decoder_input,
-                    memory=vision_output.transpose(0, 1)
-                )
-                
-                logits = self.output_layer(decoder_output.transpose(0, 1))
-                all_logits.append(logits)
-                next_token = logits[:, -1:].argmax(dim=-1)
-                
-                curr_token = next_token
-                
-                if (next_token == self.end_token).any():
-                    break
-                    
-            return torch.cat(all_logits, dim=1)  # Return concatenated logits instead of tokens
+        decoder_input = (tgt_embeddings + pos_embeddings).transpose(0, 1)
+        
+        decoder_output = self.decoder(
+            tgt=decoder_input,
+            memory=vision_output.transpose(0, 1),
+            tgt_key_padding_mask=~attention_mask.bool()
+        )
+        logits = self.output_layer(decoder_output.transpose(0, 1))
+        return logits
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, batch_limit=1000):
     model.train()
@@ -259,10 +288,14 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, batc
     
     return avg_loss
 
-def validate(model, dataloader, criterion, device, batch_limit=200):
+def validate(model, dataloader, criterion, device, epoch, save_dir, dataset, batch_limit=200):
     model.eval()
     total_loss = 0
     progress_bar = tqdm(enumerate(dataloader), total=batch_limit, desc='Validation')
+    
+    # Create directory for validation plots if it doesn't exist
+    plot_dir = os.path.join(save_dir, 'validation_plots')
+    os.makedirs(plot_dir, exist_ok=True)
     
     with torch.no_grad():
         for batch_idx, batch in progress_bar:
@@ -270,13 +303,30 @@ def validate(model, dataloader, criterion, device, batch_limit=200):
                 break
                 
             batch = {k: v.to(device) for k, v in batch.items()}
+            
+            # Get model outputs
             outputs = model(batch)
-            loss = criterion(outputs.view(-1, outputs.size(-1)), 
-                           batch['labels'].view(-1))
+            
+            # Calculate loss
+            loss = criterion(
+                outputs.contiguous().view(-1, outputs.size(-1)),
+                batch['labels'].contiguous().view(-1)
+            )
+            
             total_loss += loss.item()
+            progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
+            
+            # Save plot for first batch
+            if batch_idx == 0:
+                plot_predictions(
+                    model, 
+                    batch,
+                    dataset,
+                    os.path.join(plot_dir, f'val_epoch_{epoch}.png'),
+                    device
+                )
             
     return total_loss / min(batch_limit, len(dataloader))
-
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -326,7 +376,8 @@ if __name__ == "__main__":
                                    optimizer, device, epoch, batch_limit=500)
         
         # Validate on batches
-        val_loss = validate(model, val_loader, criterion, device, batch_limit=100)
+        val_loss = validate(model, val_loader, criterion, device, 
+                        epoch, save_dir, dataset, batch_limit=100)
         
         print(f'Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
         
