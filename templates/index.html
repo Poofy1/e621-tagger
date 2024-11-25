@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Upload</title>
+    <style>
+        .drop-zone {
+            width: 300px;
+            height: 300px;
+            border: 2px dashed #ccc;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            cursor: pointer;
+            margin: 20px auto;
+        }
+
+        .drop-zone--over {
+            border-color: #000;
+        }
+
+        .drop-zone__prompt {
+            font-size: 1.2rem;
+            color: #666;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .drop-zone__input {
+            display: none;
+        }
+
+        .drop-zone__thumb {
+            width: 100%;
+            height: 100%;
+            border-radius: 4px;
+            overflow: hidden;
+            background-color: #cccccc;
+            background-size: cover;
+            background-position: center;
+            position: relative;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="drop-zone">
+        <span class="drop-zone__prompt">Drop file here or click to upload</span>
+        <input type="file" name="myFile" class="drop-zone__input" accept="image/*">
+    </div>
+
+    <script>
+        document.querySelectorAll(".drop-zone").forEach(dropZone => {
+            const input = dropZone.querySelector(".drop-zone__input");
+            const prompt = dropZone.querySelector(".drop-zone__prompt");
+
+            dropZone.addEventListener("click", (e) => {
+                input.click();
+            });
+
+            input.addEventListener("change", (e) => {
+                if (input.files.length) {
+                    updateThumbnail(dropZone, input.files[0]);
+                }
+            });
+
+            dropZone.addEventListener("dragover", (e) => {
+                e.preventDefault();
+                dropZone.classList.add("drop-zone--over");
+            });
+
+            ["dragleave", "dragend"].forEach(type => {
+                dropZone.addEventListener(type, (e) => {
+                    dropZone.classList.remove("drop-zone--over");
+                });
+            });
+
+            dropZone.addEventListener("drop", (e) => {
+                e.preventDefault();
+
+                if (e.dataTransfer.files.length) {
+                    input.files = e.dataTransfer.files;
+                    updateThumbnail(dropZone, e.dataTransfer.files[0]);
+                }
+
+                dropZone.classList.remove("drop-zone--over");
+            });
+        });
+
+        function updateThumbnail(dropZone, file) {
+            let thumbnailElement = dropZone.querySelector(".drop-zone__thumb");
+
+            // Remove prompt if it exists
+            if (dropZone.querySelector(".drop-zone__prompt")) {
+                dropZone.querySelector(".drop-zone__prompt").remove();
+            }
+
+            // Create thumbnail element if it doesn't exist
+            if (!thumbnailElement) {
+                thumbnailElement = document.createElement("div");
+                thumbnailElement.classList.add("drop-zone__thumb");
+                dropZone.appendChild(thumbnailElement);
+            }
+
+            // Show thumbnail for image files
+            if (file.type.startsWith("image/")) {
+                const reader = new FileReader();
+
+                reader.readAsDataURL(file);
+                reader.onload = () => {
+                    thumbnailElement.style.backgroundImage = `url('${reader.result}')`;
+                    thumbnailElement.style.display = "block";
+                };
+            }
+        }
+    </script>
+</body>
+</html>

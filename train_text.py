@@ -1,5 +1,5 @@
 
-import torch,os, pickle
+import torch, os, pickle
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
@@ -8,16 +8,14 @@ import random
 import pandas as pd
 from tqdm import tqdm
 from torch.utils.data import Dataset
-from transformers import ViTModel
-from torch.nn import TransformerDecoder, TransformerDecoderLayer
 import pyarrow.parquet as pq
+from model import *
 env = os.path.dirname(os.path.abspath(__file__))
 
 
 import matplotlib.pyplot as plt
 import torchvision.transforms as T
 from textwrap import wrap
-
 def plot_predictions(model, batch, dataset, save_path, device, num_samples=3):
     # Denormalize images for display
     denorm = T.Normalize(
@@ -28,10 +26,16 @@ def plot_predictions(model, batch, dataset, save_path, device, num_samples=3):
     # Get predictions
     with torch.no_grad():
         outputs = model(batch)
-        predictions = outputs.argmax(dim=-1)
+        # Reshape predictions the same way as in the working version
+        predictions = outputs.view(-1, outputs.size(-1))
+        pred_indices = torch.argmax(predictions, dim=1).cpu().numpy()
+        # Reshape back to batch dimension
+        pred_indices = pred_indices.reshape(outputs.size(0), -1)
     
     # Create subplot grid with more height for text
     fig, axes = plt.subplots(num_samples, 1, figsize=(20, 8*num_samples))
+    if num_samples == 1:
+        axes = [axes]
     
     for i in range(min(num_samples, len(batch['images']))):
         # Get and denormalize image
@@ -40,13 +44,13 @@ def plot_predictions(model, batch, dataset, save_path, device, num_samples=3):
         
         # Convert predicted indices to tags
         pred_tags = []
-        for idx in predictions[i]:
-            if idx.item() == dataset.vocab.word2index['<END>']:
+        for idx in pred_indices[i]:
+            if idx == dataset.vocab.word2index['<END>']:
                 break
-            if idx.item() not in [dataset.vocab.word2index['<PAD>'], 
-                                 dataset.vocab.word2index['<START>'], 
-                                 dataset.vocab.word2index['<UNK>']]:
-                pred_tags.append(dataset.vocab.index2word[idx.item()])
+            if idx not in [dataset.vocab.word2index['<PAD>'], 
+                          dataset.vocab.word2index['<START>'], 
+                          dataset.vocab.word2index['<UNK>']]:
+                pred_tags.append(dataset.vocab.index2word[idx])
         
         # Get ground truth tags
         true_tags = []
@@ -211,54 +215,7 @@ def custom_collate(batch):
         'label_lengths': torch.LongTensor([len(t) for t in label_tensors])
     }
 
-class ImageLabelModel(nn.Module):
-    def __init__(self, vocab_size, hidden_dim=768):
-        super().__init__()
-        self.vocab_size = vocab_size 
-        self.start_token = 1 
-        self.end_token = 2 
-        
-        self.vision_encoder = ViTModel.from_pretrained(
-            'google/vit-base-patch16-224',
-        )
-            
-        self.token_embedding = nn.Embedding(vocab_size, hidden_dim)
-        self.position_embedding = nn.Parameter(torch.zeros(1, 1024, hidden_dim))  # Max length for positional embedding
-        
-        decoder_layer = TransformerDecoderLayer(
-            d_model=hidden_dim,
-            nhead=8,
-            dim_feedforward=2048,
-            dropout=0.1
-        )
-        self.decoder = TransformerDecoder(decoder_layer, num_layers=6)
-        
-        self.output_layer = nn.Linear(hidden_dim, vocab_size)
-        self.hidden_dim = hidden_dim
 
-    def forward(self, batch):
-        images = batch['images']
-        labels = batch['labels']
-        attention_mask = batch['attention_mask']
-        batch_size = images.shape[0]
-        seq_len = labels.size(1)
-        
-        # Encode images
-        vision_output = self.vision_encoder(images).last_hidden_state
-        
-        # Always use teacher forcing during training and validation
-        tgt_embeddings = self.token_embedding(labels)
-        pos_embeddings = self.position_embedding[:, :seq_len, :]
-        
-        decoder_input = (tgt_embeddings + pos_embeddings).transpose(0, 1)
-        
-        decoder_output = self.decoder(
-            tgt=decoder_input,
-            memory=vision_output.transpose(0, 1),
-            tgt_key_padding_mask=~attention_mask.bool()
-        )
-        logits = self.output_layer(decoder_output.transpose(0, 1))
-        return logits
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, batch_limit=1000):
     model.train()
@@ -360,7 +317,7 @@ if __name__ == "__main__":
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, collate_fn=custom_collate)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=1, collate_fn=custom_collate)
 
-    num_epochs = 5
+    num_epochs = 500
     best_val_loss = float('inf')
     patience = 5
     patience_counter = 0
@@ -372,12 +329,10 @@ if __name__ == "__main__":
         print(f'\nEpoch {epoch+1}/{num_epochs}')
         
         # Train on 1000 batches
-        train_loss = train_one_epoch(model, train_loader, criterion, 
-                                   optimizer, device, epoch, batch_limit=500)
+        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, epoch, batch_limit=1000)
         
         # Validate on batches
-        val_loss = validate(model, val_loader, criterion, device, 
-                        epoch, save_dir, dataset, batch_limit=100)
+        val_loss = validate(model, val_loader, criterion, device, epoch, save_dir, dataset, batch_limit=100)
         
         print(f'Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
         
@@ -415,3 +370,5 @@ if __name__ == "__main__":
         torch.save(checkpoint, f'{save_dir}/latest_model.pth')
 
     print('Training completed!')
+    
+    

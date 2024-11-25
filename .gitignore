@@ -14,6 +14,7 @@
 *.parquet
 *.pth
 *.png
+/venv
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
