@@ -117,6 +117,10 @@ class Vocabulary:
             vocab.num_words = len(vocab.word2index)
         return vocab
     
+    
+    def __getitem__(self, idx):
+        return self.index2word.get(idx, self.index2word[3])  # Return <UNK> if idx not found
+    
     def __len__(self):
         return self.num_words
     

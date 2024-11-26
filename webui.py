@@ -128,5 +128,4 @@ def launch():
 
 if __name__ == "__main__":
     load_model()
-    
     launch()

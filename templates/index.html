@@ -49,18 +49,25 @@
         }
 
         .image-path-input {
-            width: 300px;
+            min-width: 300px;
+            width: 100%;  /* Let it take the full width of its container, but still responsive */
             margin: 10px auto;
             display: block;
-            border: 1px solid #eee;  /* Light border */
-            border-radius: 4px;      /* Rounded corners */
+            border: 1px solid #eee;
+            border-radius: 4px;
             outline: none;
             font-size: 1rem;
             color: #666;
-            background: #f9f9f9;     /* Light background */
+            background: #f9f9f9;
             text-align: center;
             padding: 8px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);  /* Subtle shadow */
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            white-space: pre-wrap;  /* Wrap the text properly */
+            overflow-y: visible;  /* Prevent vertical scrollbar */
+            resize: both;  /* Allow manual resizing */
+            max-width: 90vw;  /* Limit the width to 90% of the viewport */
+            height: auto;  /* Allow dynamic height */
+            min-height: 40px;  /* Set minimum height */
         }
     </style>
 </head>
@@ -69,7 +76,7 @@
         <span class="drop-zone__prompt">Drop file here or click to upload</span>
         <input type="file" name="myFile" class="drop-zone__input" accept="image/*">
     </div>
-    <input type="text" class="image-path-input" readonly placeholder="Predictions will appear here">
+    <textarea class="image-path-input" readonly placeholder="Predictions will appear here"></textarea>
 
     <script>
         document.querySelectorAll(".drop-zone").forEach(dropZone => {
@@ -131,9 +138,22 @@
                 const result = await response.json();
                 console.log('Upload successful:', result);
                 
-                // Update the text input with the prediction
+                // Add this to your existing JavaScript
+                function adjustTextareaHeight(textarea) {
+                    textarea.style.height = 'auto';
+                    textarea.style.height = textarea.scrollHeight + 'px';
+                }
+
+                // Add this event listener
+                document.querySelector(".image-path-input").addEventListener('input', function() {
+                    adjustTextareaHeight(this);
+                });
+
+                // Modify your existing code where you update the prediction
                 if (result.prediction) {
-                    document.querySelector(".image-path-input").value = result.prediction;
+                    const textarea = document.querySelector(".image-path-input");
+                    textarea.value = result.prediction;
+                    adjustTextareaHeight(textarea);
                 }
                 
             } catch (error) {
