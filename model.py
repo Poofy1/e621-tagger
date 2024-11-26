@@ -90,32 +90,53 @@ class ImageLabelModel(nn.Module):
         vision_output = self.vision_encoder(images).last_hidden_state
         vision_features = self.vision_projection(vision_output)
         
-        # Generate full sequence in one pass
-        decoder_output = self.decoder(
-            tgt=torch.zeros_like(vision_features).transpose(0, 1),
-            memory=vision_features.transpose(0, 1)
-        )
+        # Start with START token for each sequence in batch
+        current_tokens = torch.full((batch_size, 1), self.start_token, 
+                                dtype=torch.long, device=images.device)
         
-        logits = self.output_layer(decoder_output.transpose(0, 1))
+        for i in range(max_length):
+            # Get token embeddings
+            token_embeddings = self.token_embedding(current_tokens)
+            
+            # Add positional embeddings
+            positions = self.pos_embedding[:, :token_embeddings.size(1), :]
+            decoder_input = token_embeddings + positions
+            
+            # Create attention mask
+            tgt_mask = generate_square_subsequent_mask(current_tokens.size(1)).to(images.device)
+            
+            # Decode
+            decoder_output = self.decoder(
+                tgt=decoder_input.transpose(0, 1),
+                memory=vision_features.transpose(0, 1),
+                tgt_mask=tgt_mask
+            )
+            
+            # Get predictions for next token
+            logits = self.output_layer(decoder_output.transpose(0, 1))
+            next_token_logits = logits[:, -1, :]
+            next_token = next_token_logits.argmax(dim=-1, keepdim=True)
+            
+            # Append predicted token
+            current_tokens = torch.cat([current_tokens, next_token], dim=1)
+            
+            # Stop if all sequences have END token
+            if (current_tokens == self.end_token).any(dim=1).all():
+                break
         
-        # Get most likely tokens for each position
-        predicted_tokens = logits.argmax(dim=-1)
-        
-        # Trim sequences at END token if present
+        # Trim sequences at END token
         final_sequences = []
-        for seq in predicted_tokens:
-            # Find position of first END token
+        for seq in current_tokens:
             end_pos = (seq == self.end_token).nonzero()
             if len(end_pos) > 0:
-                # Keep sequence up to first END token
                 final_sequences.append(seq[:end_pos[0]])
             else:
-                # Keep full sequence if no END token
                 final_sequences.append(seq)
-                
+        
         # Pad sequences to same length
         max_len = max(len(seq) for seq in final_sequences)
-        padded_sequences = torch.zeros(batch_size, max_len, device=images.device)
+        padded_sequences = torch.zeros(batch_size, max_len, 
+                                    dtype=torch.long, device=images.device)
         for i, seq in enumerate(final_sequences):
             padded_sequences[i, :len(seq)] = seq
             
