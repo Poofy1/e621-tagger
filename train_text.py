@@ -229,9 +229,8 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, batc
         batch = {k: v.to(device) for k, v in batch.items()}
         
         optimizer.zero_grad()
-        logits, target_tokens = model(batch, teacher_forcing_ratio=1.0)  # Always use teacher forcing during training
+        logits, target_tokens = model(batch, teacher_forcing_ratio=1.0)
         
-        # Calculate loss
         B, S, V = logits.shape
         loss = criterion(logits.reshape(B*S, V), target_tokens.reshape(-1))
         
@@ -239,13 +238,19 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, batc
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         
-        total_loss += loss.item()
-        avg_loss = total_loss / (batch_idx + 1)
+        # Calculate metrics
+        with torch.no_grad():  # Prevent memory accumulation during metric calculation
+            avg_loss = loss.item()
+            predictions = logits.argmax(dim=-1)
+            mask = target_tokens != model.end_token
+            accuracy = (predictions == target_tokens)[mask].float().mean().item()
         
-        # Calculate accuracy
-        predictions = logits.argmax(dim=-1)
-        mask = target_tokens != model.end_token  # Don't count padding tokens
-        accuracy = (predictions == target_tokens)[mask].float().mean().item()
+        # Explicitly clear memory
+        del loss, logits, predictions, mask
+        torch.cuda.empty_cache()  # Clear unused memory
+        
+        total_loss += avg_loss
+        avg_loss = total_loss / (batch_idx + 1)
         
         progress_bar.set_postfix({
             'loss': f'{avg_loss:.4f}',
@@ -341,18 +346,36 @@ if __name__ == "__main__":
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     
-    dataset = E621Dataset(f'{env}/data/dataset.parquet', 'F:/Temp_SSD_Data/ME621/images_300/', 'F:/CODE/AI/e621-tagger/data/tag_map.csv', transform=transform, vocab_path='F:/CODE/AI/e621-tagger/data/e621_vocabulary.pkl')
+    dataset = E621Dataset(f'{env}/data/dataset.parquet', 'F:/Temp_SSD_Data/ME621/images_300/', 
+                         'F:/CODE/AI/e621-tagger/data/tag_map.csv', transform=transform, 
+                         vocab_path='F:/CODE/AI/e621-tagger/data/e621_vocabulary.pkl')
 
     # Model setup
     vocab_size = len(dataset.vocab)
     model = ImageLabelModel(vocab_size).to(device)
+    
+    # Load checkpoint
+    checkpoint_path = f'{env}/checkpoints/latest_model.pth'  # or 'best_model.pth'
+    if os.path.exists(checkpoint_path):
+        print(f"Loading checkpoint from {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_val_loss = checkpoint.get('val_loss', float('inf'))
+        print(f"Resuming from epoch {start_epoch} with validation loss: {best_val_loss:.4f}")
+    else:
+        print("No checkpoint found, starting from scratch")
+        start_epoch = 0
+        best_val_loss = float('inf')
+
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")  
     
     # For training
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+    if os.path.exists(checkpoint_path):
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
     criterion = nn.CrossEntropyLoss(ignore_index=dataset.vocab.word2index['<PAD>']).to(device)
-
-
 
     # Split dataset into train and validation
     train_size = int(0.9 * len(dataset))
@@ -360,29 +383,29 @@ if __name__ == "__main__":
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
     batch_size = 16
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, collate_fn=custom_collate)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=1, collate_fn=custom_collate)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, 
+                            num_workers=1, collate_fn=custom_collate)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, 
+                          num_workers=1, collate_fn=custom_collate)
 
     num_epochs = 500
-    best_val_loss = float('inf')
     patience = 5
     patience_counter = 0
     save_dir = f'{env}/checkpoints'
     os.makedirs(save_dir, exist_ok=True)
 
     # Training loop
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         print(f'\nEpoch {epoch+1}/{num_epochs}')
         
-        # Train on 1000 batches
-        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, epoch, batch_limit=1000)
+        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, 
+                                   device, epoch, batch_limit=1000)
         
-        # Validate on batches
-        val_loss = validate(model, val_loader, criterion, device, epoch, save_dir, dataset, batch_limit=100)
+        val_loss = validate(model, val_loader, criterion, device, epoch, 
+                          save_dir, dataset, batch_limit=100)
         
         print(f'Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
         
-        # Save checkpoint if validation loss improved
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
@@ -399,7 +422,6 @@ if __name__ == "__main__":
         else:
             patience_counter += 1
             
-        # Early stopping
         if patience_counter >= patience:
             print(f'Early stopping triggered after {epoch+1} epochs')
             break

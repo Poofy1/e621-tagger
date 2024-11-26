@@ -19,7 +19,7 @@ class ImageLabelModel(nn.Module):
         self.max_length = 512
         
         self.vision_encoder = ViTModel.from_pretrained(
-            'google/vit-base-patch16-224',
+            'google/vit-base-patch16-224'
         )
         
         # Project vision features to sequence length
@@ -41,34 +41,67 @@ class ImageLabelModel(nn.Module):
         self.output_layer = nn.Linear(hidden_dim, vocab_size)
         self.hidden_dim = hidden_dim
 
-    def forward(self, batch, teacher_forcing_ratio=1.0):
+    def forward(self, batch, teacher_forcing_ratio=0.8):
         images = batch['images']
         labels = batch['labels']
         
         if labels.size(1) > self.max_length:
             labels = labels[:, :self.max_length]
             
-        # Encode images
-        vision_output = self.vision_encoder(images).last_hidden_state
-        vision_features = self.vision_projection(vision_output)
+        batch_size = labels.size(0)
+        max_len = labels.size(1) - 1  # -1 because we don't need to predict after the last token
         
-        # Prepare decoder input sequence
-        decoder_input = labels[:, :-1]  # Remove last token
-        decoder_input_embedded = self.token_embedding(decoder_input)
-        
-        # Add positional embeddings
-        positions = self.pos_embedding[:, :decoder_input_embedded.size(1), :]
-        decoder_input_embedded = decoder_input_embedded + positions
-        
-        # Decode with teacher forcing
-        decoder_output = self.decoder(
-            tgt=decoder_input_embedded.transpose(0, 1),
-            memory=vision_features.transpose(0, 1),
-            tgt_mask=generate_square_subsequent_mask(decoder_input.size(1)).to(decoder_input.device)
-        )
-        
-        logits = self.output_layer(decoder_output.transpose(0, 1))
-        
+        with torch.cuda.amp.autocast():  # Use mixed precision to reduce memory usage
+            # Encode images
+            vision_output = self.vision_encoder(images).last_hidden_state
+            vision_features = self.vision_projection(vision_output)
+            del vision_output
+            
+            # Initialize decoder input with START token
+            decoder_input = labels[:, 0].unsqueeze(1)  # Get just the START token
+            outputs = []
+            
+            for t in range(max_len):
+                # Embed current input tokens
+                decoder_input_embedded = self.token_embedding(decoder_input)
+                
+                # Add positional embeddings
+                positions = self.pos_embedding[:, :decoder_input_embedded.size(1), :]
+                decoder_input_embedded = decoder_input_embedded + positions
+                
+                # Generate mask
+                tgt_mask = generate_square_subsequent_mask(decoder_input.size(1)).to(decoder_input.device)
+                
+                # Decode
+                decoder_output = self.decoder(
+                    tgt=decoder_input_embedded.transpose(0, 1),
+                    memory=vision_features.transpose(0, 1),
+                    tgt_mask=tgt_mask
+                )
+                
+                # Get prediction for current timestep
+                step_output = self.output_layer(decoder_output.transpose(0, 1))
+                current_step_logits = step_output[:, -1:]  # Get just the last token prediction
+                outputs.append(current_step_logits)
+                
+                # Teacher forcing decision for next input
+                if t < max_len - 1:  # Don't need to generate input for the last prediction
+                    use_teacher_forcing = (torch.rand(1).item() < teacher_forcing_ratio)
+                    if use_teacher_forcing:
+                        # Use ground truth token as next input
+                        next_input = labels[:, t+1].unsqueeze(1)
+                    else:
+                        # Use model's prediction as next input
+                        next_input = current_step_logits.argmax(dim=-1)
+                    decoder_input = torch.cat([decoder_input, next_input], dim=1)
+                
+                # Clear unnecessary tensors
+                del decoder_input_embedded, decoder_output, step_output, tgt_mask
+            
+            # Concatenate all outputs
+            logits = torch.cat(outputs, dim=1)
+            del outputs, vision_features
+            
         return logits, labels[:, 1:]  # Return logits and targets (removing START token)
 
     

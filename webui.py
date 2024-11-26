@@ -129,6 +129,4 @@ def launch():
 if __name__ == "__main__":
     load_model()
     
-    image = Image.open("C:/Users/Tristan/Desktop/tmp43h3_fm7.png")
-    print(predict(image))
-    #launch()
+    launch()
