@@ -11,11 +11,11 @@ from torch.utils.data import Dataset
 import pyarrow.parquet as pq
 from model import *
 env = os.path.dirname(os.path.abspath(__file__))
-
-
 import matplotlib.pyplot as plt
 import torchvision.transforms as T
 from textwrap import wrap
+
+
 def plot_predictions(model, batch, dataset, save_path, device, num_samples=3):
     # Denormalize images for display
     denorm = T.Normalize(
@@ -25,12 +25,15 @@ def plot_predictions(model, batch, dataset, save_path, device, num_samples=3):
     
     # Get predictions
     with torch.no_grad():
-        outputs = model(batch)
-        # Reshape predictions the same way as in the working version
-        predictions = outputs.view(-1, outputs.size(-1))
+        logits, _ = model(batch)  # Unpack the tuple
+        # Reshape predictions
+        predictions = logits.view(-1, logits.size(-1))
         pred_indices = torch.argmax(predictions, dim=1).cpu().numpy()
         # Reshape back to batch dimension
-        pred_indices = pred_indices.reshape(outputs.size(0), -1)
+        pred_indices = pred_indices.reshape(logits.size(0), -1)
+        
+        # Also get full sequence generations for comparison
+        generated = model.generate(batch['images'])
     
     # Create subplot grid with more height for text
     fig, axes = plt.subplots(num_samples, 1, figsize=(20, 8*num_samples))
@@ -46,18 +49,29 @@ def plot_predictions(model, batch, dataset, save_path, device, num_samples=3):
         pred_tags = []
         for idx in pred_indices[i]:
             pred_tags.append(dataset.vocab.index2word[idx])
+            
+        # Convert generated indices to tags
+        gen_tags = []
+        for idx in generated[i]:
+            tag = dataset.vocab.index2word[idx.item()]
+            if tag not in ['<PAD>', '<START>', '<END>']:
+                gen_tags.append(tag)
         
         # Get ground truth tags
         true_tags = []
         for idx in batch['labels'][i]:
-            true_tags.append(dataset.vocab.index2word[idx.item()])
+            tag = dataset.vocab.index2word[idx.item()]
+            if tag not in ['<PAD>', '<START>', '<END>']:
+                true_tags.append(tag)
         
         # Wrap text for better display
-        pred_text = "Predicted: " + ", ".join(pred_tags)
-        true_text = "Actual: " + ", ".join(true_tags)
+        pred_text = "Next Token Predictions: " + ", ".join(pred_tags)
+        gen_text = "Full Generation: " + ", ".join(gen_tags)
+        true_text = "Ground Truth: " + ", ".join(true_tags)
         
         # Split text into multiple lines if too long
         pred_wrapped = "\n".join(wrap(pred_text, width=120))
+        gen_wrapped = "\n".join(wrap(gen_text, width=120))
         true_wrapped = "\n".join(wrap(true_text, width=120))
         
         # Plot
@@ -65,10 +79,10 @@ def plot_predictions(model, batch, dataset, save_path, device, num_samples=3):
         axes[i].axis('off')
         
         # Add text with smaller font and more space
-        axes[i].set_title(f'{pred_wrapped}\n\n{true_wrapped}',
+        axes[i].set_title(f'{pred_wrapped}\n\n{gen_wrapped}\n\n{true_wrapped}',
                          fontsize=8, wrap=True, pad=20)
     
-    plt.tight_layout(pad=3.0)  # Increase padding between subplots
+    plt.tight_layout(pad=3.0)
     plt.savefig(save_path, bbox_inches='tight', dpi=300)
     plt.close()
     
@@ -165,9 +179,6 @@ class E621Dataset(Dataset):
         
         tags = [self.tag_map[idx] for idx in tag_indices if idx in self.tag_map]
         
-        # Randomly shuffle tags during training
-        random.shuffle(tags)
-        
         # Modified label creation - simpler separator
         label_string = "<START> " + " ".join(tags) + " <END>"
         
@@ -206,8 +217,7 @@ def custom_collate(batch):
     }
 
 
-
-def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, batch_limit=1000):
+def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, batch_limit=100):
     model.train()
     total_loss = 0
     progress_bar = tqdm(enumerate(dataloader), total=batch_limit, desc=f'Epoch {epoch}')
@@ -216,14 +226,14 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, batc
         if batch_idx >= batch_limit:
             break
             
-        # Move data to device
         batch = {k: v.to(device) for k, v in batch.items()}
         
         optimizer.zero_grad()
-        outputs = model(batch)
+        logits, target_tokens = model(batch, teacher_forcing_ratio=1.0)  # Always use teacher forcing during training
         
-        loss = criterion(outputs.view(-1, outputs.size(-1)), 
-                        batch['labels'].view(-1))
+        # Calculate loss
+        B, S, V = logits.shape
+        loss = criterion(logits.reshape(B*S, V), target_tokens.reshape(-1))
         
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -231,16 +241,25 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, batc
         
         total_loss += loss.item()
         avg_loss = total_loss / (batch_idx + 1)
-        progress_bar.set_postfix({'loss': f'{avg_loss:.4f}'})
+        
+        # Calculate accuracy
+        predictions = logits.argmax(dim=-1)
+        mask = target_tokens != model.end_token  # Don't count padding tokens
+        accuracy = (predictions == target_tokens)[mask].float().mean().item()
+        
+        progress_bar.set_postfix({
+            'loss': f'{avg_loss:.4f}',
+            'acc': f'{accuracy:.3f}'
+        })
     
     return avg_loss
 
 def validate(model, dataloader, criterion, device, epoch, save_dir, dataset, batch_limit=200):
     model.eval()
     total_loss = 0
+    total_accuracy = 0
     progress_bar = tqdm(enumerate(dataloader), total=batch_limit, desc='Validation')
     
-    # Create directory for validation plots if it doesn't exist
     plot_dir = os.path.join(save_dir, 'validation_plots')
     os.makedirs(plot_dir, exist_ok=True)
     
@@ -251,17 +270,49 @@ def validate(model, dataloader, criterion, device, epoch, save_dir, dataset, bat
                 
             batch = {k: v.to(device) for k, v in batch.items()}
             
-            # Get model outputs
-            outputs = model(batch)
+            # Get model outputs using teacher forcing (for loss calculation)
+            logits, target_tokens = model(batch, teacher_forcing_ratio=1.0)
             
             # Calculate loss
-            loss = criterion(
-                outputs.contiguous().view(-1, outputs.size(-1)),
-                batch['labels'].contiguous().view(-1)
-            )
+            B, S, V = logits.shape
+            loss = criterion(logits.reshape(B*S, V), target_tokens.reshape(-1))
+            
+            # Calculate accuracy (ignoring padding tokens)
+            predictions = logits.argmax(dim=-1)
+            mask = target_tokens != model.end_token
+            accuracy = (predictions == target_tokens)[mask].float().mean().item()
             
             total_loss += loss.item()
-            progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
+            total_accuracy += accuracy
+            
+            # Also get free-running generation for visualization
+            if batch_idx == 0:
+                generated_tokens = model.generate(batch['images'])
+                
+                print("\n--- Debugging: First 3 Instances ---")
+                for i in range(min(3, target_tokens.size(0))):
+                    target_seq = target_tokens[i].tolist()
+                    predicted_seq = generated_tokens[i].tolist()
+                    
+                    # Convert tokens to words if dataset has token_to_word mapping
+                    if hasattr(dataset, 'token_to_word'):
+                        target_words = [dataset.token_to_word.get(t, '<UNK>') for t in target_seq 
+                                      if t != model.end_token]
+                        pred_words = [dataset.token_to_word.get(t, '<UNK>') for t in predicted_seq 
+                                    if t != model.end_token]
+                        print(f"Instance {i + 1}:")
+                        print(f"  Target: {' '.join(target_words)}")
+                        print(f"  Predicted: {' '.join(pred_words)}")
+                    else:
+                        print(f"Instance {i + 1}:")
+                        print(f"  Target Tokens: {target_seq}")
+                        print(f"  Predicted Tokens: {predicted_seq}")
+                    print("-" * 30)
+            
+            progress_bar.set_postfix({
+                'loss': f'{loss.item():.4f}',
+                'acc': f'{accuracy:.3f}'
+            })
             
             # Save plot for first batch
             if batch_idx == 0:
@@ -272,8 +323,13 @@ def validate(model, dataloader, criterion, device, epoch, save_dir, dataset, bat
                     os.path.join(plot_dir, f'val_epoch_{epoch}.png'),
                     device
                 )
-            
-    return total_loss / min(batch_limit, len(dataloader))
+    
+    avg_loss = total_loss / min(batch_limit, len(dataloader))
+    avg_accuracy = total_accuracy / min(batch_limit, len(dataloader))
+    
+    print(f"\nValidation Results - Loss: {avg_loss:.4f}, Accuracy: {avg_accuracy:.3f}")
+    
+    return avg_loss
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -293,7 +349,7 @@ if __name__ == "__main__":
     print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")  
     
     # For training
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
     criterion = nn.CrossEntropyLoss(ignore_index=dataset.vocab.word2index['<PAD>']).to(device)
 
 

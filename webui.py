@@ -30,9 +30,7 @@ def load_model():
     global model, vocab
     
     # Load vocabulary
-    with open(f'{env}/data/e621_vocabulary.pkl', 'rb') as f:
-        vocab_dict = pickle.load(f)
-        vocab = {v: k for k, v in vocab_dict.items()}
+    vocab = Vocabulary.load('F:/CODE/AI/e621-tagger/data/e621_vocabulary.pkl')
     
     # Initialize model
     model = ImageLabelModel(len(vocab)).to(device)
@@ -44,7 +42,6 @@ def load_model():
     
     print("Model loaded successfully")
 
-load_model()  # Call this immediately
 
 def predict(image):
     # Image preprocessing
@@ -57,17 +54,10 @@ def predict(image):
     # Transform image
     image = transform(image).unsqueeze(0).to(device)
     
-    # Create dummy batch data
-    batch = {
-        'images': image,
-        'labels': torch.tensor([[1]]).to(device),  # START token
-        'attention_mask': torch.tensor([[1]]).to(device)
-    }
-    
     # Generate predictions
     with torch.no_grad():
-        outputs = model(batch)
-        predictions = outputs.argmax(dim=-1)[0]
+        outputs = model.generate(image)  # This already returns the token sequence
+        predictions = outputs[0]  # Get first sequence from batch
         
     # Convert predictions to tags
     predicted_tags = []
@@ -105,8 +95,6 @@ def upload_file():
 
         # Save file
         filename = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-        with open(filename, 'wb') as f:
-            f.write(image_bytes)
 
         return jsonify({
             'message': 'File uploaded and processed successfully',
@@ -137,10 +125,10 @@ def launch():
     # Open the browser
     webbrowser.open_new('http://127.0.0.1:5000/')
 
-    # Run main thread tasks
-    #main_thread_tasks()
-
-
 
 if __name__ == "__main__":
-    launch()
+    load_model()
+    
+    image = Image.open("C:/Users/Tristan/Desktop/tmp43h3_fm7.png")
+    print(predict(image))
+    #launch()
