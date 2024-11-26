@@ -1,4 +1,5 @@
 import os
+import io
 from flask import Flask, render_template, request, jsonify
 import torch
 import webbrowser
@@ -45,16 +46,15 @@ def load_model():
 
 load_model()  # Call this immediately
 
-def predict(image_path):
+def predict(image):
     # Image preprocessing
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
-    
-    # Load and transform image
-    image = Image.open(image_path).convert('RGB')
+
+    # Transform image
     image = transform(image).unsqueeze(0).to(device)
     
     # Create dummy batch data
@@ -78,42 +78,50 @@ def predict(image_path):
         if idx not in [0, 1, 2, 3]:  # Skip special tokens
             predicted_tags.append(vocab[idx])
     
-    return predicted_tags
+    output = ", ".join(predicted_tags)
 
+    return output
+
+
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    try:
+        if 'image' not in request.files:
+            return jsonify({'error': 'No file part'}), 400
+        
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'}), 400
+
+        image_bytes = file.read()
+        image = Image.open(io.BytesIO(image_bytes))
+        
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+
+        # Get prediction first
+        prediction_text = predict(image)
+
+        # Save file
+        filename = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+        with open(filename, 'wb') as f:
+            f.write(image_bytes)
+
+        return jsonify({
+            'message': 'File uploaded and processed successfully',
+            'prediction': prediction_text,
+            'path': filename
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+    
 @app.route('/')
 def home():
     return render_template('index.html')
 
-@app.route('/predict', methods=['POST'])
-def predict_tags():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
-    
-    if file:
-        # Save uploaded file
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-        file.save(filepath)
-        
-        try:
-            # Get predictions
-            predicted_tags = predict(filepath)
-            
-            # Clean up
-            os.remove(filepath)
-            
-            return jsonify({
-                'success': True,
-                'tags': predicted_tags
-            })
-            
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
-        
-    return jsonify({'error': 'Unknown error'}), 500
 
 
 
@@ -121,7 +129,6 @@ def run_flask():
     app.run(debug=False, use_reloader=False)
 
 
-    
 def launch():
     # Start Flask in a separate thread
     flask_thread = threading.Thread(target=run_flask)

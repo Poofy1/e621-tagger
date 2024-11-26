@@ -16,6 +16,7 @@
             flex-direction: column;
             cursor: pointer;
             margin: 20px auto;
+            position: relative;
         }
 
         .drop-zone--over {
@@ -27,6 +28,7 @@
             color: #666;
             text-align: center;
             padding: 20px;
+            pointer-events: none;
         }
 
         .drop-zone__input {
@@ -43,6 +45,22 @@
             background-position: center;
             position: relative;
             display: none;
+            pointer-events: none;
+        }
+
+        .image-path-input {
+            width: 300px;
+            margin: 10px auto;
+            display: block;
+            border: 1px solid #eee;  /* Light border */
+            border-radius: 4px;      /* Rounded corners */
+            outline: none;
+            font-size: 1rem;
+            color: #666;
+            background: #f9f9f9;     /* Light background */
+            text-align: center;
+            padding: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);  /* Subtle shadow */
         }
     </style>
 </head>
@@ -51,11 +69,13 @@
         <span class="drop-zone__prompt">Drop file here or click to upload</span>
         <input type="file" name="myFile" class="drop-zone__input" accept="image/*">
     </div>
+    <input type="text" class="image-path-input" readonly placeholder="Predictions will appear here">
 
     <script>
         document.querySelectorAll(".drop-zone").forEach(dropZone => {
             const input = dropZone.querySelector(".drop-zone__input");
             const prompt = dropZone.querySelector(".drop-zone__prompt");
+            const pathInput = document.querySelector(".image-path-input");
 
             dropZone.addEventListener("click", (e) => {
                 input.click();
@@ -63,7 +83,9 @@
 
             input.addEventListener("change", (e) => {
                 if (input.files.length) {
-                    updateThumbnail(dropZone, input.files[0]);
+                    const file = input.files[0];
+                    updateThumbnail(dropZone, file);
+                    uploadFile(file);
                 }
             });
 
@@ -82,30 +104,57 @@
                 e.preventDefault();
 
                 if (e.dataTransfer.files.length) {
+                    const file = e.dataTransfer.files[0];
                     input.files = e.dataTransfer.files;
-                    updateThumbnail(dropZone, e.dataTransfer.files[0]);
+                    updateThumbnail(dropZone, file);
+                    uploadFile(file);
                 }
 
                 dropZone.classList.remove("drop-zone--over");
             });
         });
 
+        async function uploadFile(file) {
+            try {
+                const formData = new FormData();
+                formData.append('image', file);
+
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error('Upload failed');
+                }
+
+                const result = await response.json();
+                console.log('Upload successful:', result);
+                
+                // Update the text input with the prediction
+                if (result.prediction) {
+                    document.querySelector(".image-path-input").value = result.prediction;
+                }
+                
+            } catch (error) {
+                console.error('Error uploading file:', error);
+                alert('Failed to upload image. Please try again.');
+            }
+        }
+
         function updateThumbnail(dropZone, file) {
             let thumbnailElement = dropZone.querySelector(".drop-zone__thumb");
 
-            // Remove prompt if it exists
             if (dropZone.querySelector(".drop-zone__prompt")) {
                 dropZone.querySelector(".drop-zone__prompt").remove();
             }
 
-            // Create thumbnail element if it doesn't exist
             if (!thumbnailElement) {
                 thumbnailElement = document.createElement("div");
                 thumbnailElement.classList.add("drop-zone__thumb");
                 dropZone.appendChild(thumbnailElement);
             }
 
-            // Show thumbnail for image files
             if (file.type.startsWith("image/")) {
                 const reader = new FileReader();
 

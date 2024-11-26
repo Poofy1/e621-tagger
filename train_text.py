@@ -45,22 +45,12 @@ def plot_predictions(model, batch, dataset, save_path, device, num_samples=3):
         # Convert predicted indices to tags
         pred_tags = []
         for idx in pred_indices[i]:
-            if idx == dataset.vocab.word2index['<END>']:
-                break
-            if idx not in [dataset.vocab.word2index['<PAD>'], 
-                          dataset.vocab.word2index['<START>'], 
-                          dataset.vocab.word2index['<UNK>']]:
-                pred_tags.append(dataset.vocab.index2word[idx])
+            pred_tags.append(dataset.vocab.index2word[idx])
         
         # Get ground truth tags
         true_tags = []
         for idx in batch['labels'][i]:
-            if idx.item() == dataset.vocab.word2index['<END>']:
-                break
-            if idx.item() not in [dataset.vocab.word2index['<PAD>'], 
-                                 dataset.vocab.word2index['<START>'], 
-                                 dataset.vocab.word2index['<UNK>']]:
-                true_tags.append(dataset.vocab.index2word[idx.item()])
+            true_tags.append(dataset.vocab.index2word[idx.item()])
         
         # Wrap text for better display
         pred_text = "Predicted: " + ", ".join(pred_tags)
