@@ -16,6 +16,8 @@
 *.png
 /venv
 
+!demo/demo.png
+
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
