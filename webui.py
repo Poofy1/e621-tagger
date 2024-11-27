@@ -9,6 +9,7 @@ import torchvision.transforms as transforms
 from train.model import *
 from train.train_text import *
 import logging
+from huggingface_hub import hf_hub_download
 import warnings
 
 # Suppress Flask development server warning
@@ -28,9 +29,30 @@ vocab = None
 app.config['MAX_CONTENT_LENGTH'] = 256 * 1024 * 1024  # 256MB max file size
 app.config['UPLOAD_FOLDER'] = 'uploads'
 
-# Load model immediately when the module is imported
+def download_model():
+    model_path = f'{env}/checkpoints/best_model.pth'
+    
+    # Check if model exists locally
+    if not os.path.exists(model_path):
+        print("Downloading model from Hugging Face...")
+        os.makedirs(f'{env}/checkpoints', exist_ok=True)
+        
+        # Download the model file
+        hf_hub_download(
+            repo_id="poofy38/e621-tagger-01",
+            filename="best_model.pth",
+            local_dir=f'{env}/checkpoints',
+            repo_type="model"
+        )
+        print("Model downloaded successfully")
+    return model_path
+
+
 def load_model():
     global model, vocab
+    
+    # Download model if needed
+    model_path = download_model()
     
     # Load vocabulary
     vocab = Vocabulary.load('F:/CODE/AI/e621-tagger/data/e621_vocabulary.pkl')
@@ -39,13 +61,14 @@ def load_model():
     model = ImageLabelModel(len(vocab)).to(device)
     
     # Load checkpoint
-    checkpoint = torch.load(f'{env}/checkpoints/best_model.pth', map_location=device)
+    checkpoint = torch.load(model_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
     
     print("Model loaded successfully")
-    
     print(f"Using device: {device}")
+
+
 
 
 def predict(image):

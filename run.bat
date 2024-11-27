@@ -60,13 +60,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Check if model file exists
-if not exist "checkpoints\best_model.pth" (
-    echo Warning: Model file not found in checkpoints folder
-    echo Please ensure you have the model file in the correct location
-    pause
-)
-
 :: Start Flask app
 echo Starting webui...
 python webui.py
