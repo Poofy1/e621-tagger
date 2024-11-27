@@ -29,6 +29,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: Update pip
+echo Updating pip...
+python -m pip install --quiet --upgrade pip
+if errorlevel 1 (
+    echo Failed to update pip
+    pause
+    exit /b 1
+)
+
 :: Install all required packages
 echo Installing requirements...
 pip install --quiet ^
@@ -51,13 +60,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Create required directories
-echo Creating directories...
-if not exist uploads mkdir uploads
-if not exist checkpoints mkdir checkpoints
-if not exist data mkdir data
-if not exist templates mkdir templates
-
 :: Check if model file exists
 if not exist "checkpoints\best_model.pth" (
     echo Warning: Model file not found in checkpoints folder
@@ -66,10 +68,10 @@ if not exist "checkpoints\best_model.pth" (
 )
 
 :: Start Flask app
-echo Starting Flask application...
+echo Starting webui...
 python webui.py
 if errorlevel 1 (
-    echo Failed to start Flask application
+    echo Failed to start webui
     pause
     exit /b 1
 )

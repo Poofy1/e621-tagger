@@ -2,8 +2,7 @@ from transformers import ViTModel
 from torch.nn import TransformerDecoder, TransformerDecoderLayer
 import torch.nn as nn
 import torch
-
-
+    
 def generate_square_subsequent_mask(sz):
         """Generate mask for transformer decoder to prevent attending to future tokens."""
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
@@ -31,11 +30,11 @@ class ImageLabelModel(nn.Module):
         # Decoder will operate on vision features directly
         decoder_layer = TransformerDecoderLayer(
             d_model=hidden_dim,
-            nhead=4,
-            dim_feedforward=1024,
+            nhead=8,
+            dim_feedforward=2048,
             dropout=0.1
         )
-        self.decoder = TransformerDecoder(decoder_layer, num_layers=3)
+        self.decoder = TransformerDecoder(decoder_layer, num_layers=6)
         
         # Output layer predicts all tokens at once
         self.output_layer = nn.Linear(hidden_dim, vocab_size)
@@ -81,8 +80,6 @@ class ImageLabelModel(nn.Module):
             
         return logits, labels[:, 1:]  # Return logits and targets (removing START token)
 
-    
-    
     def generate(self, images, max_length=500):
         batch_size = images.size(0)
         

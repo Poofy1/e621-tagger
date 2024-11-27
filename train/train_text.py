@@ -4,16 +4,24 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
-import random
+import sys
 import pandas as pd
 from tqdm import tqdm
 from torch.utils.data import Dataset
 import pyarrow.parquet as pq
-from model import *
-env = os.path.dirname(os.path.abspath(__file__))
 import matplotlib.pyplot as plt
 import torchvision.transforms as T
 from textwrap import wrap
+
+# Add the project root directory to Python path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(project_root)
+
+from train.model import *
+
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+env = os.path.dirname(current_dir)
 
 
 def plot_predictions(model, batch, dataset, save_path, device, num_samples=3):
@@ -181,9 +189,11 @@ class E621Dataset(Dataset):
         
         tag_indices = self.data.iloc[idx]['tag_indices']
         
+        # Get tags and sort them alphabetically
         tags = [self.tag_map[idx] for idx in tag_indices if idx in self.tag_map]
+        tags = sorted(tags)  # Sort alphabetically
         
-        # Modified label creation - simpler separator
+        # Create label string with sorted tags
         label_string = "<START> " + " ".join(tags) + " <END>"
         
         # Convert to indices
@@ -294,30 +304,6 @@ def validate(model, dataloader, criterion, device, epoch, save_dir, dataset, bat
             total_loss += loss.item()
             total_accuracy += accuracy
             
-            # Also get free-running generation for visualization
-            if batch_idx == 0:
-                generated_tokens = model.generate(batch['images'])
-                
-                print("\n--- Debugging: First 3 Instances ---")
-                for i in range(min(3, target_tokens.size(0))):
-                    target_seq = target_tokens[i].tolist()
-                    predicted_seq = generated_tokens[i].tolist()
-                    
-                    # Convert tokens to words if dataset has token_to_word mapping
-                    if hasattr(dataset, 'token_to_word'):
-                        target_words = [dataset.token_to_word.get(t, '<UNK>') for t in target_seq 
-                                      if t != model.end_token]
-                        pred_words = [dataset.token_to_word.get(t, '<UNK>') for t in predicted_seq 
-                                    if t != model.end_token]
-                        print(f"Instance {i + 1}:")
-                        print(f"  Target: {' '.join(target_words)}")
-                        print(f"  Predicted: {' '.join(pred_words)}")
-                    else:
-                        print(f"Instance {i + 1}:")
-                        print(f"  Target Tokens: {target_seq}")
-                        print(f"  Predicted Tokens: {predicted_seq}")
-                    print("-" * 30)
-            
             progress_bar.set_postfix({
                 'loss': f'{loss.item():.4f}',
                 'acc': f'{accuracy:.3f}'
@@ -359,7 +345,7 @@ if __name__ == "__main__":
     model = ImageLabelModel(vocab_size).to(device)
     
     # Load checkpoint
-    checkpoint_path = f'{env}/checkpoints/latest_model.pth'  # or 'best_model.pth'
+    checkpoint_path = f'{env}/checkpoints/best_model.pth'
     if os.path.exists(checkpoint_path):
         print(f"Loading checkpoint from {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path)
@@ -403,7 +389,7 @@ if __name__ == "__main__":
         print(f'\nEpoch {epoch+1}/{num_epochs}')
         
         train_loss = train_one_epoch(model, train_loader, criterion, optimizer, 
-                                   device, epoch, batch_limit=1000)
+                                   device, epoch, batch_limit=5000)
         
         val_loss = validate(model, val_loader, criterion, device, epoch, 
                           save_dir, dataset, batch_limit=100)
@@ -429,17 +415,6 @@ if __name__ == "__main__":
         if patience_counter >= patience:
             print(f'Early stopping triggered after {epoch+1} epochs')
             break
-        
-        # Save latest model
-        checkpoint = {
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'train_loss': train_loss,
-            'val_loss': val_loss,
-            'vocab': dataset.vocab
-        }
-        torch.save(checkpoint, f'{save_dir}/latest_model.pth')
 
     print('Training completed!')
     

@@ -7,7 +7,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import multiprocessing as mp
 
-env = os.path.dirname(os.path.abspath(__file__))
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+env = os.path.dirname(current_dir)
 
 def count_tags(chunk):
     local_counter = Counter()
