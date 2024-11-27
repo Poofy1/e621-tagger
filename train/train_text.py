@@ -337,8 +337,8 @@ if __name__ == "__main__":
     ])
     
     dataset = E621Dataset(f'{env}/data/dataset.parquet', 'F:/Temp_SSD_Data/ME621/images_300/', 
-                         'F:/CODE/AI/e621-tagger/data/tag_map.csv', transform=transform, 
-                         vocab_path='F:/CODE/AI/e621-tagger/data/e621_vocabulary.pkl')
+                         f'{env}/data/tag_map.csv', transform=transform, 
+                         vocab_path=f'{env}/data/e621_vocabulary.pkl')
 
     # Model setup
     vocab_size = len(dataset.vocab)
