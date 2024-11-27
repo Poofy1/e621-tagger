@@ -40,7 +40,7 @@ if errorlevel 1 (
 
 :: Install all required packages
 echo Installing requirements...
-pip install --quiet -r requirements.txt
+pip install -r requirements.txt
 
 if errorlevel 1 (
     echo Failed to install requirements
