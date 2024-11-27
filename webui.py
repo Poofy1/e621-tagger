@@ -30,22 +30,30 @@ app.config['MAX_CONTENT_LENGTH'] = 256 * 1024 * 1024  # 256MB max file size
 app.config['UPLOAD_FOLDER'] = 'uploads'
 
 def download_model():
-    model_path = f'{env}/checkpoints/best_model.pth'
+    # Create necessary directories
+    os.makedirs(f'{env}/checkpoints', exist_ok=True)
+    os.makedirs(f'{env}/data', exist_ok=True)
     
-    # Check if model exists locally
-    if not os.path.exists(model_path):
-        print("Downloading model from Hugging Face...")
-        os.makedirs(f'{env}/checkpoints', exist_ok=True)
-        
-        # Download the model file
-        hf_hub_download(
-            repo_id="poofy38/e621-tagger-01",
-            filename="best_model.pth",
-            local_dir=f'{env}/checkpoints',
-            repo_type="model"
-        )
-        print("Model downloaded successfully")
-    return model_path
+    # Define files to download
+    files_to_download = [
+        {'filename': 'best_model.pth', 'local_path': f'{env}/checkpoints/best_model.pth'},
+        {'filename': 'e621_vocabulary.pkl', 'local_path': f'{env}/data/e621_vocabulary.pkl'},
+        {'filename': 'tag_map.csv', 'local_path': f'{env}/data/tag_map.csv'}
+    ]
+    
+    # Download each file if it doesn't exist
+    for file in files_to_download:
+        if not os.path.exists(file['local_path']):
+            print(f"Downloading {file['filename']}...")
+            hf_hub_download(
+                repo_id="poofy38/e621-tagger-01",
+                filename=file['filename'],
+                local_dir=os.path.dirname(file['local_path']),
+                repo_type="model"
+            )
+            print(f"{file['filename']} downloaded successfully")
+    
+    return f'{env}/checkpoints/best_model.pth'
 
 
 def load_model():
@@ -55,7 +63,7 @@ def load_model():
     model_path = download_model()
     
     # Load vocabulary
-    vocab = Vocabulary.load('F:/CODE/AI/e621-tagger/data/e621_vocabulary.pkl')
+    vocab = Vocabulary.load(f'{env}/data/e621_vocabulary.pkl')
     
     # Initialize model
     model = ImageLabelModel(len(vocab)).to(device)
@@ -150,7 +158,9 @@ def launch():
     flask_thread.start()
 
     # Open the browser
+    link = 'http://127.0.0.1:5000/'
     webbrowser.open_new('http://127.0.0.1:5000/')
+    print(f'Opened webpage interface at: {link}')
 
 
 if __name__ == "__main__":

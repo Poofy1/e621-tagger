@@ -1,0 +1,13 @@
+flask
+torch
+torchvision
+Pillow
+pandas
+pyarrow
+numpy
+tqdm
+transformers
+scikit-learn
+matplotlib
+fastparquet
+huggingface_hub

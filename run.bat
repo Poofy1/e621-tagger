@@ -40,19 +40,7 @@ if errorlevel 1 (
 
 :: Install all required packages
 echo Installing requirements...
-pip install --quiet ^
-    flask ^
-    torch ^
-    torchvision ^
-    Pillow ^
-    pandas ^
-    pyarrow ^
-    numpy ^
-    tqdm ^
-    transformers ^
-    scikit-learn ^
-    matplotlib ^
-    fastparquet
+pip install --quiet -r requirements.txt
 
 if errorlevel 1 (
     echo Failed to install requirements
