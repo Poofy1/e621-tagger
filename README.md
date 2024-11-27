@@ -1,6 +1,6 @@
 # E621 Tagger
 
-A web application that provides automatic image tagging using a trained deep learning model. The model is trained on e621 data to predict relevant tags for images. NSFW and SFW images are compatible. No GPU required.
+A web interface that translates furry images to e621 tags. NSFW and SFW images are compatible. No GPU required.
 
 ![Demo Interface](demo/demo.png)
 
